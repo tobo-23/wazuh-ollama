@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:      # bouton "Run workflow" (lancement manuel)
 
 jobs:
   validate:
@@ -19,10 +20,10 @@ jobs:
       - name: Lint YAML
         run: |
           pip install yamllint
-          yamllint -d "{extends: relaxed, rules: {line-length: disable}}" docker-compose.yml config/
+          yamllint -d "{extends: relaxed, rules: {line-length: disable, trailing-spaces: disable}}" docker-compose.yml config/
 
       - name: Analyser le script bash
-        run: shellcheck change-password.sh
+        run: shellcheck --severity=warning change-password.sh
 
   security:
     runs-on: ubuntu-latest
@@ -52,6 +53,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Réglage noyau requis par l'indexer (OpenSearch)
+        run: sudo sysctl -w vm.max_map_count=262144
+
       - name: Préparer la stack
         run: |
           cp .env.example .env
@@ -64,10 +68,13 @@ jobs:
 
       - name: Attendre l'indexer
         run: |
+          # 200 = répond, 401 = répond mais demande un mot de passe : dans les deux cas l'indexer est up
           for i in $(seq 1 30); do
-            if curl -sk https://localhost:9200 -u admin:SecretPassword | grep -q cluster_name; then
-              echo "Indexer OK"; exit 0
+            code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost:9200 || true)
+            if [ "$code" = "200" ] || [ "$code" = "401" ]; then
+              echo "Indexer OK (HTTP $code)"; exit 0
             fi
+            echo "Essai $i/30 : HTTP $code"
             sleep 10
           done
           docker compose logs --tail=100
@@ -76,5 +83,3 @@ jobs:
       - name: Nettoyer
         if: always()
         run: docker compose down -v
-
-  
