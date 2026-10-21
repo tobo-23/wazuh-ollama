@@ -98,7 +98,7 @@ grep -qF "$HASH" "$USERS_FILE" || { echo "Le hash n'a pas été écrit dans $USE
 
 # ---------- 5. Démarrage ----------
 echo "==> Démarrage de la stack"
-docker compose up -d
+docker compose up -d wazuh.manager wazuh.indexer wazuh.dashboard
 
 # ---------- 6. securityadmin.sh ----------
 echo "==> Application des changements avec securityadmin.sh (attente de l'indexer)"

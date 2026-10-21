@@ -3,6 +3,9 @@ config/wazuh_indexer_ssl_certs/
 *.pem
 *.key
 
+#Sauvegardes du script change-password.sh
+*.bak*
+
 # Secrets
 .env
 EOF
