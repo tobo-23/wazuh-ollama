@@ -1,0 +1,4 @@
+Caddyfile :
+ai.votredomaine.fr {
+  reverse_proxy open-webui:8085
+}
