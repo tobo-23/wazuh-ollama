@@ -1,0 +1,57 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+    - N8N_HOST=192.168.1.56
+    - N8N_PORT=5678
+    - N8N_PROTOCOL=http
+    - WEBHOOK_URL=http://n8n.local:5678/
+    - N8N_RESTRICT_FILE_ACCESS_TO=/files
+    - N8N_SECURE_COOKIE=false
+    - N8N_CORS_ORIGIN=*
+    - N8N_CORS_ALLOW_METHODS=GET,POST,OPTIONS
+    - N8N_CORS_ALLOW_HEADERS=Content-Type,Authorization,X-Requested-With,Accept
+    - N8N_ALLOW_CREDENTIALS=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.local`)"
+      - "traefik.http.routers.n8n.entrypoints=web"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+      - "traefik.http.middlewares.n8n-cors.headers.accesscontrolalloworiginlist=http://127.0.0.1:8082"
+      - "traefik.http.middlewares.n8n-cors.headers.accesscontrolallowmethods=GET,POST,OPTIONS"
+      - "traefik.http.middlewares.n8n-cors.headers.accesscontrolallowheaders=Content-Type,Authorization"
+      - "traefik.http.middlewares.n8n-cors.headers.addvaryheader=true"
+      - "traefik.http.routers.n8n.middlewares=n8n-cors"
+    networks:
+      - web
+
+  
+  traefik:
+    image: traefik:v3.0
+    container_name: traefik
+    restart: always
+    ports:
+      - "80:80"
+      - "8080:8080"
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - web
+
+networks:
+  web:
+    driver: bridge
+
+volumes:
+  n8n_data:

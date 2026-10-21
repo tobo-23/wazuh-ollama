@@ -1,0 +1,203 @@
+<group name="syscheck,pci_dss_11.5,nist_800_53_SI.7,">
+
+  <rule id="100200" level="7">
+    <if_sid>550</if_sid>
+    <field name="syscheck.path">^/tmp/</field>
+    <description>File modified in /tmp directory.</description>
+  </rule>
+
+  <rule id="100201" level="7">
+    <if_sid>554</if_sid>
+    <field name="syscheck.path">^/tmp/</field>
+    <description>File added to /tmp directory.</description>
+  </rule>
+
+</group>
+
+<group name="virustotal,">
+
+  <rule id="100092" level="12">
+    <if_sid>657</if_sid>
+    <match>Successfully removed threat</match>
+    <description>$(parameters.program) removed threat located at $(parameters.alert.data.virustotal.source.file)</description>
+  </rule>
+
+  <rule id="100093" level="12">
+    <if_sid>657</if_sid>
+    <match>Error removing threat</match>
+    <description>Error removing threat located at $(parameters.alert.data.virustotal.source.file)</description>
+  </rule>
+
+</group>
+
+<group name="syscheck,suspicious_binary,">
+  <rule id="100300" level="10">
+    <if_sid>554</if_sid>
+    <field name="syscheck.path">/tmp/|/var/tmp/|/dev/shm/</field>
+      <match>is_executable</match>
+      <description>Executable binary created in temporary directory: $(syscheck.path)</description>
+      <mitre>
+        <id>T1036</id>
+      </mitre>
+    </rule>
+</group>
+
+<group name="linux,nmap,network_scan">
+    <rule id="200400" level="3">
+        <decoded_as>json</decoded_as>
+        <field name="nmap_host">\.+</field>
+        <field name="nmap_protocol">\.+</field>
+        <description>NMAP: Network Scan Host $(nmap_host)</description>
+        <options>no_full_log</options>
+    </rule>
+</group>
+
+<!-- DEBUT RULES DOCKER -->
+<group name="syscheck, custom_docker,">
+  <!-- Alerte quand un fichier docker-compose.yml est créé -->
+  <rule id="100010" level="7">
+    <if_sid>554</if_sid>
+    <match>docker-compose.yml</match>
+    <description>Alerte de sécurité : Un nouveau fichier docker-compose.yml a été créé sur le système.</description>
+    <group>syscheck,</group>
+  </rule>
+</group>
+
+<!-- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxREGLES TRIVY MEMOIRE LABORATOIRExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx -->
+
+<group name="trivy,application_security">
+
+  <!-- Toutes les détections Trivy -->
+  <rule id="100600" level="5">
+    <match>TRIVY_SECURITY</match>
+    <description>Problème de sécurité détecté par Trivy</description>
+    <group>trivy,misconfiguration,</group>
+  </rule>
+
+
+  <!-- Détection HIGH -->
+  <rule id="100601" level="10">
+    <if_sid>100600</if_sid>
+    <match>severity=HIGH</match>
+    <description>Trivy : mauvaise configuration de niveau HIGH détectée</description>
+    <group>trivy,high_severity,</group>
+  </rule>
+
+
+  <!-- Détection CRITICAL -->
+  <rule id="100602" level="14">
+    <if_sid>100600</if_sid>
+    <match>severity=CRITICAL</match>
+    <description>Trivy : mauvaise configuration de niveau CRITICAL détectée</description>
+    <group>trivy,critical_severity,</group>
+  </rule>
+
+
+  <!-- Erreur du scanner -->
+  <rule id="100603" level="8">
+    <match>TRIVY_SCAN_ERROR</match>
+    <description>Erreur lors de l'analyse Trivy</description>
+  </rule>
+
+</group>
+<!-- xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxREGLES TRIVY MEMOIRE LABORATOIRExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx -->
+<group name="vibe_coding,application_security">
+
+  <!-- Secrets et identifiants en clair -->
+  <rule id="100500" level="12">
+    <if_group>syscheck</if_group>
+    <regex type="pcre2">(?i)(password|passwd|pwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|token)\s*[:=]\s*["']?[^\s"'$]{6,}</regex>
+    <description>Potentiel identifiant ou secret codé en dur détecté dans un fichier modifié</description>
+    <mitre>
+      <id>T1552.001</id>
+    </mitre>
+  </rule>
+
+  <!-- Conteneur Docker en mode privilégié -->
+  <rule id="100501" level="12">
+    <if_group>syscheck</if_group>
+    <regex type="pcre2">(?i)privileged\s*:\s*true</regex>
+    <description>Conteneur Docker configuré en mode privilégié</description>
+    <mitre>
+      <id>T1611</id>
+    </mitre>
+  </rule>
+
+  <!-- Utilisation du réseau de l'hôte -->
+  <rule id="100502" level="10">
+    <if_group>syscheck</if_group>
+    <regex type="pcre2">(?i)network_mode\s*:\s*["']?host</regex>
+    <description>Conteneur Docker configuré pour utiliser le réseau de l'hôte</description>
+    <mitre>
+      <id>T1611</id>
+    </mitre>
+  </rule>
+
+  <!-- Montage du socket Docker -->
+  <rule id="100503" level="14">
+    <if_group>syscheck</if_group>
+    <regex type="pcre2">(?i)/var/run/docker\.sock</regex>
+    <description>Socket Docker monté dans un conteneur</description>
+    <mitre>
+      <id>T1611</id>
+    </mitre>
+  </rule>
+
+  <!-- Conteneur exécuté avec les privilèges root -->
+  <rule id="100504" level="10">
+    <if_group>syscheck</if_group>
+    <regex type="pcre2">(?i)\buser\s*:\s*["']?root["']?</regex>
+    <description>Conteneur Docker configuré pour s'exécuter avec l'utilisateur root</description>
+  </rule>
+
+  <!-- Port Docker exposé sur toutes les interfaces -->
+  <rule id="100505" level="10">
+    <if_group>syscheck</if_group>
+    <regex type="pcre2">0\.0\.0\.0\s*:\s*\d+\s*:\s*\d+</regex>
+    <description>Service Docker exposé sur toutes les interfaces réseau de l'hôte</description>
+  </rule>
+
+  <!-- TLS/SSL désactivé -->
+  <rule id="100506" level="10">
+    <if_group>syscheck</if_group>
+    <regex type="pcre2">(?i)(ssl|tls|https|verify)[_-]?(enabled|verify|validation)?\s*:\s*(false|no|0|disabled)</regex>
+    <description>Vérification SSL/TLS potentiellement désactivée dans un fichier modifié</description>
+  </rule>
+
+  <!-- Utilisation de l'image Docker latest -->
+  <rule id="100507" level="7">
+    <if_group>syscheck</if_group>
+    <regex type="pcre2">(?i)\bimage\s*:\s*[^\s:#]+:latest\b</regex>
+    <description>Image Docker utilisant le tag latest</description>
+  </rule>
+
+  <rule id="100510" level="12">
+    <if_group>syscheck</if_group>
+    <match>privileged</match>
+    <description>TEST - Mot privileged détecté dans une modification de fichier</description>
+  </rule>
+
+</group>
+
+
+<!-- INICIO RANSOMWARE RULES -->
+<group name="syscheck,ransomware,">
+  <rule id="100400" level="12" frequency="20" timeframe="60">
+    <if_matched_sid>550</if_matched_sid>
+    <description>Possible ransomware activity: $(syscheck.diff) files modified rapidly</description>
+    <mitre>
+      <id>T1486</id>
+    </mitre>
+  </rule>
+</group>
+
+<group name="syscheck,ransomware,critical,">
+  <rule id="100401" level="14">
+    <if_sid>554</if_sid>
+    <field name="syscheck.path">\.encrypted$|\.locked$|\.crypto$|\.crypt$</field>
+    <description>Possible ransomware: file with encryption extension created: $(syscheck.path)</description>
+    <mitre>
+      <id>T1486</id>
+    </mitre>
+  </rule>
+</group>
