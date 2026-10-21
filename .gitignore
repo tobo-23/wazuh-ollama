@@ -1,0 +1,8 @@
+# Certificats et clés générés
+config/wazuh_indexer_ssl_certs/
+*.pem
+*.key
+
+# Secrets
+.env
+EOF
