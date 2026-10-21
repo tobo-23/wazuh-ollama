@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Valider le docker-compose.yml
+        run: |
+          cp .env.example .env
+          docker compose config -q
+
+      - name: Lint YAML
+        run: |
+          pip install yamllint
+          yamllint -d "{extends: relaxed, rules: {line-length: disable}}" docker-compose.yml config/
+
+      - name: Analyser le script bash
+        run: shellcheck change-password.sh
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Refuser les fichiers sensibles
+        run: |
+          bad=$(git ls-files | grep -E '(^|/)\.env$|\.pem$|\.key$|\.bak-' || true)
+          if [ -n "$bad" ]; then
+            echo "Fichiers sensibles versionnés :"
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: Détecter les secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Préparer la stack
+        run: |
+          cp .env.example .env
+          mkdir -p config/wazuh_indexer_ssl_certs
+          docker compose run --rm generator
+          ls -la config/wazuh_indexer_ssl_certs/
+
+      - name: Démarrer
+        run: docker compose up -d wazuh.manager wazuh.indexer wazuh.dashboard
+
+      - name: Attendre l'indexer
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sk https://localhost:9200 -u admin:SecretPassword | grep -q cluster_name; then
+              echo "Indexer OK"; exit 0
+            fi
+            sleep 10
+          done
+          docker compose logs --tail=100
+          exit 1
+
+      - name: Nettoyer
+        if: always()
+        run: docker compose down -v
+
+  
