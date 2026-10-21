@@ -2,7 +2,8 @@
 # change-password.sh
 # Change le mot de passe d'un utilisateur interne Wazuh (admin ou kibanaserver)
 # dans une stack Docker Compose single-node :
-#   1. met à jour docker-compose.yml
+#   1. écrit le mot de passe dans .env (INDEXER_PASSWORD ou DASHBOARD_PASSWORD) et
+#      fait référencer ${VARIABLE} par docker-compose.yml (plus de mot de passe en clair)
 #   2. génère le hash et met à jour config/wazuh_indexer/internal_users.yml
 #   3. relance la stack
 #   4. applique les changements avec securityadmin.sh
@@ -12,6 +13,7 @@
 set -euo pipefail
 
 COMPOSE_FILE="docker-compose.yml"
+ENV_FILE=".env"
 USERS_FILE="config/wazuh_indexer/internal_users.yml"
 INDEXER_SERVICE="wazuh.indexer"
 MAX_RETRIES=20      # 20 x 15 s = 5 minutes max d'attente
@@ -31,11 +33,17 @@ for f in "$COMPOSE_FILE" "$USERS_FILE"; do
 done
 command -v docker >/dev/null || { echo "docker n'est pas installé"; exit 1; }
 
-if grep -qE "^\s*-\s*${ENV_VAR}=\\$\{" "$COMPOSE_FILE"; then
-  echo "Le compose utilise déjà \${${ENV_VAR}} (fichier .env)."
-  echo "Modifie la valeur dans .env à la main, ce script ne gère que les valeurs en dur."
-  exit 1
-fi
+# Les certificats doivent déjà exister (le generator n'est pas relancé par ce script)
+CERTS_DIR="config/wazuh_indexer_ssl_certs"
+for c in root-ca.pem root-ca-manager.pem admin.pem admin-key.pem \
+         wazuh.indexer.pem wazuh.indexer-key.pem wazuh.manager.pem \
+         wazuh.manager-key.pem wazuh.dashboard.pem wazuh.dashboard-key.pem; do
+  [[ -f "$CERTS_DIR/$c" ]] || {
+    echo "Certificat manquant ou invalide : $CERTS_DIR/$c"
+    echo "Génère-les d'abord : docker compose run --rm generator (voir le README)."
+    exit 1
+  }
+done
 
 # ---------- Saisie du mot de passe ----------
 read -rsp "Nouveau mot de passe pour '$USER_NAME' : " PW; echo
@@ -48,6 +56,7 @@ if (( ${#PW} < 8 || ${#PW} > 64 )); then echo "Le mot de passe doit faire entre 
 [[ "$PW" =~ [0-9] ]]        || { echo "Il manque un chiffre."; exit 1; }
 [[ "$PW" =~ [^A-Za-z0-9] ]] || { echo "Il manque un caractère spécial."; exit 1; }
 [[ "$PW" =~ [[:space:]] ]]  && { echo "Pas d'espace dans le mot de passe."; exit 1; }
+[[ "$PW" == *"'"* ]]        && { echo "Pas d'apostrophe (') dans le mot de passe."; exit 1; }
 
 # ---------- 1. Arrêt de la stack ----------
 echo "==> Arrêt de la stack"
@@ -67,19 +76,42 @@ HASH=$(docker run --rm "$INDEXER_IMAGE" \
 TS=$(date +%Y%m%d-%H%M%S)
 cp "$COMPOSE_FILE" "${COMPOSE_FILE}.bak-${TS}"
 cp "$USERS_FILE"   "${USERS_FILE}.bak-${TS}"
+[[ -f "$ENV_FILE" ]] && cp "$ENV_FILE" "${ENV_FILE}.bak-${TS}"
 echo "==> Sauvegardes : *.bak-${TS}"
 
-# ---------- 3. Mise à jour de docker-compose.yml ----------
-# Dans le compose, '$' doit être doublé ($$)
-PW_COMPOSE="${PW//\$/\$\$}"
-
-echo "==> Mise à jour de $COMPOSE_FILE ($ENV_VAR)"
-PW_VALUE="$PW_COMPOSE" ENV_VAR="$ENV_VAR" awk '
+# ---------- 3a. docker-compose.yml : utiliser ${VARIABLE} au lieu du mot de passe en clair ----------
+# (sans effet si le compose utilise déjà la variable)
+echo "==> $COMPOSE_FILE : $ENV_VAR référence désormais \${$ENV_VAR}"
+ENV_VAR="$ENV_VAR" awk '
   {
     pat = "^[ \t]*-[ \t]*" ENVIRON["ENV_VAR"] "="
-    if (match($0, pat)) { print substr($0, 1, RLENGTH) ENVIRON["PW_VALUE"] }
+    if (match($0, pat)) { print substr($0, 1, RLENGTH) "${" ENVIRON["ENV_VAR"] "}" }
     else print
   }' "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp" && mv "${COMPOSE_FILE}.tmp" "$COMPOSE_FILE"
+
+# ---------- 3b. .env : écrire le mot de passe ----------
+# Entre apostrophes : Compose ne l'interprète pas, donc pas besoin de doubler les '$'
+echo "==> Mise à jour de $ENV_FILE ($ENV_VAR)"
+touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+if grep -qE "^${ENV_VAR}=" "$ENV_FILE"; then
+  ENV_VAR="$ENV_VAR" PW_VALUE="'${PW}'" awk '
+    index($0, ENVIRON["ENV_VAR"] "=") == 1 { print ENVIRON["ENV_VAR"] "=" ENVIRON["PW_VALUE"]; next }
+    { print }' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
+else
+  printf "%s='%s'\n" "$ENV_VAR" "$PW" >> "$ENV_FILE"
+fi
+chmod 600 "$ENV_FILE"
+
+# .env ne doit jamais être poussé sur GitHub
+if [[ -f .gitignore ]] && ! grep -qxE '\.env|/\.env' .gitignore; then
+  printf '\n.env\n' >> .gitignore
+  echo "==> '.env' ajouté à .gitignore"
+fi
+if [[ -f .gitignore ]] && ! grep -qxF '*.bak-*' .gitignore; then
+  printf '*.bak-*\n' >> .gitignore
+  echo "==> '*.bak-*' ajouté à .gitignore"
+fi
 
 # ---------- 4. Mise à jour de internal_users.yml ----------
 echo "==> Mise à jour du hash de '$USER_NAME' dans $USERS_FILE"

@@ -88,54 +88,55 @@ docker compose up -d
 `-v` supprime les volumes : agents enregistrés, alertes et mots de passe modifiés
 via l'API sont perdus.
 
-## Notes
-
-- Les certificats et clés (`*.pem`, `*.key`) ne doivent jamais être poussés sur GitHub.
-- Les variables `INDEXER_PASSWORD` et `API_PASSWORD` ne sont lues qu'à la première
-  initialisation. Pour changer un mot de passe ensuite, voir la documentation Wazuh
-  (hash dans `internal_users.yml` + `securityadmin` pour l'indexer, API ou dashboard
-  pour `wazuh-wui`).
-
 ## Changer un mot de passe (admin ou kibanaserver)
- 
+
 Changer la valeur dans `docker-compose.yml` ne suffit pas : l'indexer stocke un hash
 du mot de passe. Le script `change-password.sh` automatise toute la procédure
 officielle Wazuh.
- 
+
 ```bash
 chmod +x change-password.sh        # une seule fois
- 
+
 ./change-password.sh               # change le mot de passe de admin
 ./change-password.sh kibanaserver  # change celui de kibanaserver
 ```
- 
+
 Le script demande le nouveau mot de passe (saisie masquée, avec confirmation), puis :
- 
+
 1. vérifie la complexité (8 à 64 caractères, majuscule, minuscule, chiffre, symbole, sans espace) ;
 2. arrête la stack (`docker compose down`) ;
 3. génère le hash avec l'image `wazuh-indexer` du compose ;
-4. met à jour le mot de passe dans `docker-compose.yml` (les `$` sont doublés automatiquement) ;
+4. écrit le mot de passe dans `.env` (`INDEXER_PASSWORD` pour admin, `DASHBOARD_PASSWORD` pour kibanaserver) et fait référencer `${VARIABLE}` par `docker-compose.yml` ;
 5. met à jour le hash dans `config/wazuh_indexer/internal_users.yml` ;
-6. relance la stack (`docker compose up -d`) ;
+6. relance la stack (`docker compose up -d wazuh.manager wazuh.indexer wazuh.dashboard`, sans le generator) ;
 7. applique les changements avec `securityadmin.sh` (réessaie jusqu'à 5 minutes, le temps que l'indexer démarre).
+
 Une fois terminé, rafraîchis le dashboard et connecte-toi avec le nouveau mot de passe.
- 
+
 À savoir :
- 
-- Des sauvegardes `docker-compose.yml.bak-<date>` et `internal_users.yml.bak-<date>` sont créées
-  avant modification. Elles contiennent l'ancien mot de passe : elles sont ignorées par Git
-  (`*.bak-*` dans `.gitignore`).
-- Le mot de passe est écrit **en clair** dans `docker-compose.yml`. Ne pousse pas ce fichier
-  sur GitHub avec un vrai mot de passe.
-- Si le compose utilise `${INDEXER_PASSWORD}` (fichier `.env`), le script s'arrête :
-  modifie alors `.env` à la main.
+
+- Le mot de passe est stocké dans `.env` (permissions `600`), **pas** dans `docker-compose.yml`.
+  Le compose ne contient que `${INDEXER_PASSWORD}` / `${DASHBOARD_PASSWORD}` et peut donc être
+  poussé sur GitHub sans fuite. `.env` est ajouté automatiquement à `.gitignore`.
+- Les valeurs de `.env` sont écrites entre apostrophes : aucun `$` à doubler. En contrepartie,
+  le mot de passe ne peut pas contenir d'apostrophe (`'`) ni d'espace.
+- Des sauvegardes `*.bak-<date>` (compose, `internal_users.yml`, `.env`) sont créées avant
+  modification. Elles contiennent l'ancien mot de passe ou l'ancien hash : `*.bak-*` est
+  ajouté automatiquement à `.gitignore`.
+- Si ton compose contient encore des mots de passe en clair, le script les remplace
+  par `${VARIABLE}` pour la variable modifiée. Fais-le une fois pour `admin` et une fois pour
+  `kibanaserver`. `API_PASSWORD` n'est pas géré (voir plus bas) : pense à le déplacer dans
+  `.env` à la main (`API_PASSWORD=${API_PASSWORD}` dans le compose).
+- Après un changement de mot de passe, `.env` est la **seule** source à modifier côté compose.
+  Un simple `docker compose restart` ne relit pas `.env` : utilise `docker compose up -d`.
 - Le script ne gère pas `wazuh-wui` (API Wazuh). Pour celui-ci : dashboard, *Server management →
   Security → Users*, puis mets le même mot de passe dans `API_PASSWORD` et
   `config/wazuh_dashboard/wazuh.yml`, et recrée le dashboard
   (`docker compose up -d --force-recreate wazuh.dashboard`).
 - Si `securityadmin.sh` échoue, consulte `docker compose logs --tail=50 wazuh.indexer`.
+
 ## Notes
- 
+
 - Les certificats et clés (`*.pem`, `*.key`) ne doivent jamais être poussés sur GitHub.
 - Les variables `INDEXER_PASSWORD` et `API_PASSWORD` ne sont lues qu'à la première
   initialisation. Pour changer un mot de passe ensuite, utilise `change-password.sh`

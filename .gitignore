@@ -8,4 +8,4 @@ config/wazuh_indexer_ssl_certs/
 
 # Secrets
 .env
-EOF
+EOF*.bak-*
