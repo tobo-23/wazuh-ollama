@@ -4,27 +4,43 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:      # bouton "Run workflow" (lancement manuel)
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: "Stack à tester (smoke test)"
+        type: choice
+        default: all
+        options: [all, wazuh, ollama, n8n]
 
 jobs:
+  # ---------------------------------------------------------------
+  # 1. Validation statique (rapide) : compose, YAML, scripts bash
+  # ---------------------------------------------------------------
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Valider le docker-compose.yml
+      - name: Valider tous les docker-compose
         run: |
-          cp .env.example .env
-          docker compose config -q
+          for f in $(find . -name 'docker-compose.y*ml' -not -path './.git/*'); do
+            d=$(dirname "$f")
+            echo "== $f"
+            [ -f "$d/.env.example" ] && cp "$d/.env.example" "$d/.env"
+            (cd "$d" && docker compose -f "$(basename "$f")" config -q)
+          done
 
       - name: Lint YAML
         run: |
           pip install yamllint
-          yamllint -d "{extends: relaxed, rules: {line-length: disable, trailing-spaces: disable}}" docker-compose.yml config/
+          yamllint --no-warnings -d "{extends: relaxed, rules: {line-length: disable, trailing-spaces: disable, new-line-at-end-of-file: disable}}" .
 
-      - name: Analyser le script bash
-        run: shellcheck --severity=warning change-password.sh
+      - name: Analyser les scripts bash
+        run: shellcheck --severity=warning $(git ls-files '*.sh')
 
+  # ---------------------------------------------------------------
+  # 2. Sécurité : fichiers sensibles et secrets
+  # ---------------------------------------------------------------
   security:
     runs-on: ubuntu-latest
     steps:
@@ -34,7 +50,7 @@ jobs:
 
       - name: Refuser les fichiers sensibles
         run: |
-          bad=$(git ls-files | grep -E '(^|/)\.env$|\.pem$|\.key$|\.bak-' || true)
+          bad=$(git ls-files | grep -E '(^|/)\.env$|\.pem$|\.key$|\.gguf$|\.bak-' || true)
           if [ -n "$bad" ]; then
             echo "Fichiers sensibles versionnés :"
             echo "$bad"
@@ -46,10 +62,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  smoke-test:
+  # ---------------------------------------------------------------
+  # 3. Smoke tests : on démarre vraiment chaque stack et on la teste
+  #    Lancés sur push (main) ou à la main avec le choix de la stack
+  # ---------------------------------------------------------------
+  smoke-wazuh:
     runs-on: ubuntu-latest
     needs: validate
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' || inputs.stack == 'all' || inputs.stack == 'wazuh'
     steps:
       - uses: actions/checkout@v4
 
@@ -77,8 +97,94 @@ jobs:
             echo "Essai $i/30 : HTTP $code"
             sleep 10
           done
-          docker compose logs --tail=100
           exit 1
+
+      - name: Logs en cas d'échec
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Nettoyer
+        if: always()
+        run: docker compose down -v
+
+  smoke-ollama:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'push' || inputs.stack == 'all' || inputs.stack == 'ollama'
+    defaults:
+      run:
+        working-directory: ollama
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Démarrer ollama + open-webui
+        run: docker compose up -d
+
+      - name: Vérifier les services
+        run: |
+          wait_for() {
+            local url="$1" expected="$2"; shift 2
+            for i in $(seq 1 60); do
+              if curl -fsS "$@" "$url" 2>/dev/null | grep -q "$expected"; then
+                echo "OK : $url"; return 0
+              fi
+              echo "Essai $i/60 : $url"; sleep 5
+            done
+            echo "ÉCHEC : $url"; return 1
+          }
+          wait_for http://localhost:11434 "Ollama is running"
+          wait_for http://localhost:8085/health "true"
+
+      - name: Vérifier open-webui vers ollama (réseau interne)
+        run: |
+          docker compose exec -T open-webui python -c \
+            "import urllib.request; print(urllib.request.urlopen('http://ollama:11434', timeout=10).read().decode())" \
+            | grep -q "Ollama is running"
+          echo "open-webui joint bien ollama"
+
+      - name: Logs en cas d'échec
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Nettoyer
+        if: always()
+        run: docker compose down -v
+
+  smoke-n8n:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'push' || inputs.stack == 'all' || inputs.stack == 'n8n'
+    defaults:
+      run:
+        working-directory: n8n
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Démarrer n8n + traefik
+        run: |
+          mkdir -p local-files
+          docker compose up -d
+
+      - name: Vérifier les services
+        run: |
+          wait_for() {
+            local url="$1" expected="$2"; shift 2
+            for i in $(seq 1 40); do
+              if curl -fsS "$@" "$url" 2>/dev/null | grep -q "$expected"; then
+                echo "OK : $url"; return 0
+              fi
+              echo "Essai $i/40 : $url"; sleep 5
+            done
+            echo "ÉCHEC : $url"; return 1
+          }
+          wait_for http://localhost:5678/healthz "ok"
+          wait_for http://localhost:8080/api/overview "routers"
+          # Le routage Traefik : n8n.local doit mener à n8n
+          wait_for http://localhost/healthz "ok" -H "Host: n8n.local"
+
+      - name: Logs en cas d'échec
+        if: failure()
+        run: docker compose logs --tail=100
 
       - name: Nettoyer
         if: always()
