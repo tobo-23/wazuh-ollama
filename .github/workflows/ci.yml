@@ -111,6 +111,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: validate
     if: github.event_name == 'push' || inputs.stack == 'all' || inputs.stack == 'ollama'
+    env:
+      MODEL: qwen2.5:0.5b        # petit modèle (~400 Mo), assez rapide sur CPU
     defaults:
       run:
         working-directory: ollama
@@ -141,6 +143,30 @@ jobs:
             "import urllib.request; print(urllib.request.urlopen('http://ollama:11434', timeout=10).read().decode())" \
             | grep -q "Ollama is running"
           echo "open-webui joint bien ollama"
+
+      - name: Télécharger un petit modèle
+        timeout-minutes: 10
+        run: |
+          for i in 1 2 3; do
+            docker compose exec -T ollama ollama pull "$MODEL" && exit 0
+            echo "Échec du téléchargement ($i/3), nouvel essai..."; sleep 10
+          done
+          exit 1
+
+      - name: Vérifier que le modèle est installé
+        run: |
+          docker compose exec -T ollama ollama list | grep -q "$MODEL"
+          curl -fsS http://localhost:11434/api/tags | grep -q "$MODEL"
+          echo "Modèle $MODEL présent"
+
+      - name: Tester une génération
+        timeout-minutes: 5
+        run: |
+          answer=$(curl -fsS http://localhost:11434/api/generate \
+            -d "{\"model\":\"$MODEL\",\"prompt\":\"Say hello in one short sentence.\",\"stream\":false,\"options\":{\"num_predict\":20}}")
+          echo "$answer"
+          echo "$answer" | grep -q '"done":true'
+          echo "$answer" | python3 -c "import sys, json; r = json.load(sys.stdin)['response']; assert r.strip(), 'réponse vide'; print('Réponse :', r)"
 
       - name: Logs en cas d'échec
         if: failure()
