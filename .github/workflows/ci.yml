@@ -215,3 +215,31 @@ jobs:
       - name: Nettoyer
         if: always()
         run: docker compose down -v
+
+          # ---------------------------------------------------------------
+  # 3. Smoke tests : on démarre vraiment chaque stack et on la teste
+  #    Lancés sur push (main) ou à la main avec le choix de la stack
+  # ---------------------------------------------------------------
+
+  trivy:
+      runs-on: ubuntu-latest
+      needs: validate
+      strategy:
+        fail-fast: false
+        matrix:
+          image:
+            - ollama/ollama:latest
+            - ghcr.io/open-webui/open-webui:main-slim
+            - docker.n8n.io/n8nio/n8n
+            - traefik:v3.0
+            - wazuh/wazuh-manager:4.14.9
+            - wazuh/wazuh-indexer:4.14.9
+            - wazuh/wazuh-dashboard:4.14.9
+      steps:
+        - name: Aqua Security Trivy
+          uses: aquasecurity/trivy-action@v0.36.0
+          with:
+            image-ref: ${{ matrix.image }}
+            severity: HIGH,CRITICAL
+            ignore-unfixed: true
+            exit-code: "0"
