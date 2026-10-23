@@ -230,7 +230,7 @@ jobs:
           image:
             - ollama/ollama:latest
             - ghcr.io/open-webui/open-webui:main-slim
-            - docker.n8n.io/n8nio/n8n:stable
+            - docker.n8n.io/n8nio/n8n:2.44.6
             - traefik:v3.0
             - wazuh/wazuh-manager:4.14.9
             - wazuh/wazuh-indexer:4.14.9
