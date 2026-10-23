@@ -230,14 +230,14 @@ jobs:
           image:
             - ollama/ollama:latest
             - ghcr.io/open-webui/open-webui:main-slim
-            - docker.n8n.io/n8nio/n8n
+            - docker.n8n.io/n8nio/n8n:stable
             - traefik:v3.0
             - wazuh/wazuh-manager:4.14.9
             - wazuh/wazuh-indexer:4.14.9
             - wazuh/wazuh-dashboard:4.14.9
       steps:
         - name: Aqua Security Trivy
-          uses: aquasecurity/trivy-action@v0.36.0
+          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
           with:
             image-ref: ${{ matrix.image }}
             severity: HIGH,CRITICAL
